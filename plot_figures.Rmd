@@ -1,0 +1,490 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+
+```{r, echo=FALSE, include=FALSE}
+rm(list=ls())
+#setwd('.../patents/')
+library(ggplot2) 
+library(zoo)
+library(xts)
+library(dplyr)
+library(lubridate)
+#library(tibble)
+
+
+```
+
+
+```{r}
+# read in data and index df by rows with xi values and issue dates
+df_patents = read.csv('data/patents.csv')
+df_s = df_patents[(!is.na(df_patents$xi) & !is.na(df_patents$idate)),]
+
+```
+
+
+# ------------------------------- begin main work for figures 2, 3, 4 and A.1 A.2 ---------------------------------------
+```{r}
+# ------------------------------- set time ---------------------------------------
+df_s$date = as.Date(df_s$idate, '%m/%d/%Y')
+
+# index by time frames of interest
+min_date = as.Date('1961-01-01')
+max_date = as.Date('2011-01-01')
+df_slice = df_s[(df_s$date < max_date & df_s$date >= min_date),]
+
+# switch permno's for firmnames (only for some companies)
+name_match = read.csv('data/permno_name_match.csv', stringsAsFactors = FALSE)
+for (i in 1:nrow(name_match)) {
+  permno = name_match$PERMNO[i]
+  comp_name = name_match$HCOMNAM[i]
+  df_slice$permno[df_slice$permno == permno] = comp_name
+}
+
+#----------------- Set up data to analyze patents issued per company per year -------------------------
+df_slice$year = year(as.Date(df_slice$idate, format = '%m/%d/%Y'))
+df_slice$ind = 1
+
+# aggregate patent issued by company per year
+permno_most = df_slice %>% 
+  group_by(year,permno)   %>%
+  summarise(counts = sum(ind))
+
+# total patents issued per year
+total_counts = permno_most %>% 
+  group_by(year) %>%
+  summarise(total = sum(counts))
+
+# Companies by total patent issued over the period, can be used later in plotting (but isn't)
+comp_most = permno_most %>% 
+  group_by(permno) %>% 
+  summarise(most = sum(counts))
+comp_most = comp_most[order(comp_most$most, decreasing = T),]
+
+#
+permno_most = permno_most[order(permno_most$counts, decreasing = T), ]
+for (y in total_counts$year) {
+  # get ranking per year of firms by number of patents
+  # if df is ordered, rank and order here are equivalent
+  #order_counts = order(permno_most$counts[permno_most$year == y], decreasing=T)
+  #permno_most[permno_most$year==y, 'rank'] = order_counts
+  r_val = rank(-permno_most$counts[permno_most$year == y])
+  permno_most[permno_most$year==y, 'rank'] = r_val
+}
+  
+permno_most[permno_most$rank > 10, 'rank'] = 11
+permno_most[permno_most$rank <= 10, 'rank'] = permno_most[permno_most$rank <= 10, 'permno'] #'Top 10 firms' #
+
+permno_10_most = permno_most %>%
+  group_by(year, rank) %>%
+  summarise(value = sum(counts))
+
+
+#-----------------firms by total patent value per year -------------------------
+#df_slice$year = year(as.Date(df_slice$idate, format = '%m/%d/%Y'))
+
+# aggregate patent value by company by year
+permno_val = df_slice %>% 
+  group_by(permno, year)   %>%
+  summarise(val = sum(xi))
+
+# total patent values per year, not actually used but can be interesting
+total_val= permno_val %>% 
+  group_by(year) %>%
+  summarise(total = sum(val))
+
+# companies by total patent value over the period
+comp_val = permno_val %>% 
+  group_by(permno) %>% 
+  summarise(val = sum(val))
+comp_val = comp_val[order(comp_val$val, decreasing = T),]
+
+# 
+permno_val = permno_val[order(permno_val$val, decreasing = T), ]
+for (y in total_val$year) {
+  # Get ranking per year of firms by patent value
+  #order_val = order(permno_val$val[permno_val$year == y], decreasing=T)
+  #permno_val[permno_val$year==y, 'order'] = order_val
+  r_val = rank(-permno_val$val[permno_val$year == y])
+  permno_val[permno_val$year==y, 'rank'] = r_val
+}
+
+permno_val[permno_val$rank > 10, 'rank'] = 11
+permno_val[permno_val$rank <= 10, 'rank'] = permno_val[permno_val$rank <= 10, 'permno'] #'Top 10 firms' #
+
+permno_10 = permno_val %>%
+  group_by(year, rank) %>%
+  summarise(value = sum(val))
+
+# --------------------------- select firms ---------------------------------------
+permno_10_most[permno_10_most$rank == 11, 'rank'] = 'zRemaining firms'  # z was an ugly way of getting 'Remaining firms' to be last in the legend
+permno_10_most$rank = as.factor(permno_10_most$rank)
+
+permno_10[permno_10$rank == 11, 'rank'] = 'zRemaining firms'
+permno_10$rank = as.factor(permno_10$rank)
+
+# from top total patents, used to select what patents to show in the scatter plot
+companies = comp_val$permno[1:10]
+```
+
+# Gray scale
+```{r}
+# ------------------------------------------------------------------------
+#---------------------------- figure 2 -----------------------------------
+# ------------------------------------------------------------------------
+# Supposed to stand for 'company colors', went through a few iterations
+comp_colors = c('black', 'gray25','gray35', 'gray50', 'gray65', 'gray80')
+comp_colors = c('black', 'gray5', 'gray10','gray20','gray30', 'gray40','gray50', 'gray60','gray70', 'gray80', 'gray90')
+comp_colors = c('black', 'gray5', 'gray10','gray15','gray20', 'gray25','gray30', 'gray35','gray40', 'gray45', 'gray70')
+
+comp_shapes = c(3,4,2,6,0,1)
+comp_shapes = c(3,4,2,6,0,5,8,7,9,12,20)
+
+# for legend formatting
+override.shape = comp_shapes
+
+# data to plot
+df_plot = df_slice
+
+# color/shape of remaining firms
+df_plot$color = 'gray80'
+df_plot$shape = 'circle'
+
+# label formatting
+shape_scale = c(companies, 'circle')
+shape_labels = c(companies, 'Remaining firms')
+color_scale = c(companies, 'gray80')
+color_labels = c(companies, 'Remaining firms')
+
+# assign companies that aren't remaing firms their colors/shapes
+i = 1
+for (comp in companies) {
+  # set top firm shapes/colors
+  df_plot[df_plot$permno == comp, 'color'] = comp
+  df_plot[df_plot$permno == comp, 'shape'] = comp
+  i = i + 1
+}
+
+# index so can plot top firms on top of remaining
+df_top_ten = df_plot[df_plot$color != 'gray80',]
+df_plot = df_plot[df_plot$color == 'gray80', ]
+
+# y axis
+y_min = 0
+y_max = pretty(max(df_top_ten$xi))[2]
+y_step = (y_max - y_min)/5
+
+# x axis
+min_date = as.Date('1960-01-01')
+max_date = as.Date('2011-01-01')
+x_labels = c('1960', '1970', '1980', '1990', '2000', '')
+
+# we had some Fed plotting themes that i could not include so the chart will look slightly different than in the paper
+time_p = ggplot(df_plot, aes(x=date)) + 
+  geom_point(aes(y=xi, 
+                 color=color, 
+                 shape=shape
+                 ), size=1, alpha=1) + 
+  geom_point(data=df_top_ten, aes(x=date, y=xi,
+                                  color=color,
+                                  shape=shape
+                                  ), size=1, alpha=1) + 
+  scale_color_manual("", guide='legend',
+                     breaks = color_scale,
+                     limits = color_scale,
+                     values = comp_colors,
+                     labels = color_labels
+                     )+
+  scale_shape_manual("", guide=FALSE,
+                     breaks = shape_scale,
+                     limits = shape_scale,
+                     values = comp_shapes,
+                     labels = color_labels) +
+  #guides(color=guide_legend(title=NULL, override.aes = list(size=1)))+
+  guides(color = guide_legend(title=NULL,
+                              override.aes = list(shape = override.shape, size=1.5))) + # 
+  scale_x_date(labels = x_labels, limits=c(min_date, max_date),
+               breaks= seq.Date(min_date, as.Date('2011-01-01'), by = '10 year'),
+               expand=c(0,0))+
+  scale_y_continuous(position = 'right', expand = c(0,0), limits=c(y_min, y_max), 
+                     breaks = seq(y_min, y_max, by = y_step), sec.axis = dup_axis(label = NULL)) +
+  ylab(NULL) + xlab(NULL) + 
+  theme(legend.position="bottom",
+        legend.key = element_rect(fill='transparent',
+                                  color='transparent'))
+
+# Rstuddio struggled to display this plot, i would recommend writing to a png and looking at it
+ggsave("Figure2.png", time_p, width = 8, height = 6, units = "in", dpi=600)
+```
+
+```{r}
+# ------------------------------------------------------------------------
+#--------------------- Alternate version of figure 2----------------------
+# ------------------------------------------------------------------------
+comp_colors = c("#41adff","#83ff47","#8b47f6","#0052f0","#26c31a","#f33212","#ff0098","#cf6400","#ffd600","#00beac",'black')
+
+# data to plot
+df_plot = df_slice
+
+df_plot$color = 'black'
+color_scale = c(companies, 'black')
+color_labels = c(companies, 'Remaining firms')
+
+i = 1
+for (comp in companies) {
+  df_plot[df_plot$permno == comp, 'color'] = comp#comp_colors[i]
+  i = i + 1
+}
+
+# index so can plot top firms on top of remaining
+df_top_ten = df_plot[df_plot$color != 'black',]
+df_plot = df_plot[df_plot$color == 'black', ]
+
+# y axis
+y_min = 0
+y_max = pretty(max(df_top_ten$xi))[2]
+y_step = (y_max - y_min)/5
+
+# x axis
+min_date = as.Date('1960-01-01')
+max_date = as.Date('2011-01-01')
+x_labels = c('1960', '1970', '1980', '1990', '2000', '')
+
+# we had some Fed plotting themes that i could not include so the chart will look slightly different than in the paper
+xi_p = ggplot(df_plot, aes(x=date)) + 
+  geom_point(aes(y=xi, color=color), size=1, alpha=1) + 
+  geom_point(data=df_top_ten, aes(x=date, y=xi, color=color), size=1, alpha=1) + 
+  scale_color_manual("", guide='legend',
+                     breaks = color_scale,
+                     limits = color_scale,
+                     values = comp_colors,
+                     labels = color_labels)+
+  guides(color=guide_legend(title=NULL, override.aes = list(size=1)))+
+  scale_x_date(labels = x_labels, limits=c(min_date, max_date),
+               breaks= seq.Date(min_date, as.Date('2011-01-01'), by = '10 year'),
+               expand=c(0,0))+
+  scale_y_continuous(position = 'right', expand = c(0,0), limits=c(y_min, y_max), 
+                     breaks = seq(y_min, y_max, by = y_step), sec.axis = dup_axis(label = NULL)) +
+  ylab(NULL) + xlab(NULL) + 
+  theme(legend.position="bottom",
+        legend.key = element_rect(fill='transparent',
+                                  color='transparent'))
+
+ggsave("Figure2_alternate.png", xi_p, width = 8, height = 6, units = "in", dpi=600)
+```
+
+
+```{r}
+# ------------------------------------------------------------------------------------
+# ------------------------ Appendix Figure A.1 and A.2 -------------------------------
+# ------------------------------------------------------------------------------------
+
+# Colors for plotting
+hue_value = c("#583f1f", "#7038d8","#50c640","#ca4de6","#99bd37","#46239a","#c7b03b","#6a63e8","#df992a","#8e33b5","#67c177","#dc37ba","#418530","#d06cd4","#819131",
+             "#4951b1", "#e75523","#6a90e4","#de2b1c","#5ec2ab","#dd3640","#63b3d7","#e07d37","#9f79dc","#a07d2b","#7b2f88","#aab077","#cd4093","#508e67","#e53e73",
+             "#275531","#cd76b5","#303f15","#b99ed2","#a73721","#4d68aa","#daa867","#463275","#636e34","#81275c","#3a8a8b","#e46f5f","#33416d","#a8602e","#457498",
+             "#b03c56","#816534","#896493","#773322","#d6859b","#593157","#cc8e78","gray","#6e333c")
+
+hue_most= c("#583f1f", "#7038d8","#50c640","#ca4de6","#99bd37","#46239a","#c7b03b","#6a63e8","#df992a","#8e33b5","#67c177","#dc37ba","#418530","#d06cd4","#819131",
+                    "#4951b1","#e75523","#6a90e4","#de2b1c","#5ec2ab","#dd3640","#63b3d7","#e07d37","#9f79dc","#a07d2b","#7b2f88","#aab077","#cd4093","#508e67","#e53e73",
+                    "#275531","#cd76b5","#303f15","#b99ed2","#a73721","gray","#6e333c")
+
+# --------------------- plot by share of patents that year/quarter --------------------------------
+names = sort(unique(permno_10_most$rank))
+names_disp = gsub('zRemaining firms', 'Remaining firms', names, fixed = T)
+
+# again, these plots will not look exactly the same because of some internal formatting packages 
+plot_area_m = ggplot(permno_10_most, aes(x=year, y=value)) + geom_col(aes(fill=rank), position = 'fill') +
+  ylab(NULL) + xlab(NULL) +
+  labs(subtitle='Proportion of total') + 
+  scale_y_continuous(position = 'right', expand = c(0,0), sec.axis = dup_axis(label = NULL))+
+  scale_fill_manual(breaks=names, labels=names_disp, values=hue_most, name=NULL) +
+  scale_x_continuous(limits=c(1959, 2011), breaks=seq(1960, 2010, 10), expand = c(0,0))+
+  theme(legend.position="bottom",
+        plot.subtitle = element_text(size=20),
+        axis.text = element_text(size=20),
+        legend.text = element_text(size=15)) #+ guides(fill = guide_legend(ncol=6))
+plot_area_m
+
+ggsave("FigureA1.png", plot_area_m, width = 15, height = 10, units = "in", dpi=600)
+
+# --------------------- plot by share of value that year/quarter ----------------------------------
+names = sort(unique(permno_10$rank))
+names_disp = gsub('zRemaining firms', 'Remaining firms', names, fixed = T)
+
+# again, these plots will not look exactly the same because of some internal formatting packages 
+plot_area = ggplot(permno_10, aes(x=year, y=value)) + geom_col(aes(fill=rank), position = 'fill') +
+  ylab(NULL) + xlab(NULL)+
+  labs(subtitle='Proportion of total') +
+  scale_y_continuous(position = 'right', expand = c(0,0), sec.axis = dup_axis(label = NULL))+
+  scale_x_continuous(limits=c(1959, 2011), breaks=seq(1960, 2010, 10), expand = c(0,0))+
+  scale_fill_manual(breaks=names, labels=names_disp, values=hue_value, name=NULL) +
+  theme(legend.position="bottom",
+        plot.subtitle = element_text(size=20),
+        axis.text = element_text(size=20),
+        legend.text = element_text(size=15)) #+ guides(fill = guide_legend(ncol=6)) 
+plot_area
+
+ggsave("FigureA2.png", plot_area, width = 15, height = 10, units = "in", dpi=600)
+```
+
+```{r}
+# ------------------------------------------------------------------------------------
+# ---------------------------------- Figures 3 & 4  ----------------------------------
+# ------------------------------------------------------------------------------------
+permno_10_most_bw = permno_10_most
+permno_10_bw = permno_10
+
+# remove factor formatting
+permno_10_most_bw$rank = as.character(permno_10_most_bw$rank)
+permno_10_bw$rank = as.character(permno_10_bw$rank)
+
+# re-assign so only two groupings
+permno_10_most_bw[permno_10_most_bw$rank != 'zRemaining firms', 'rank'] = 'Top ten firms'
+permno_10_bw[permno_10_bw$rank != 'zRemaining firms', 'rank'] = 'Top ten firms'
+
+hue_value = c('black', 'gray')
+hue_most = c('black', 'gray')
+
+# --------------------- plot by share of patents that year/quarter --------------------------------
+names = sort(unique(permno_10_most_bw$rank))
+names_disp = gsub('zRemaining firms', 'Remaining firms', names, fixed = T)
+
+# these plots will not look exactly the same because of some internal formatting packages 
+plot_area_m = ggplot(permno_10_most_bw, aes(x=year, y=value)) + geom_col(aes(fill=rank), position = 'fill') +
+  ylab(NULL) + xlab(NULL) +
+  labs(subtitle='Proportion of total') + 
+  scale_y_continuous(position = 'right', expand = c(0,0), sec.axis = dup_axis(label = NULL))+
+  scale_fill_manual(breaks=names, labels=names_disp, values=hue_most, name=NULL) +
+  scale_x_continuous(limits=c(1959, 2011), breaks=seq(1960, 2010, 10), expand = c(0,0))+
+  theme(legend.position="bottom",
+        plot.subtitle = element_text(size=20),
+        axis.text = element_text(size=20),
+        legend.text = element_text(size=15)) #+ guides(fill = guide_legend(ncol=6))
+plot_area_m
+
+ggsave("Figure3.png", plot_area_m, width = 15, height = 10, units = "in", dpi=600)
+
+# --------------------- plot by share of value that year/quarter ----------------------------------
+names = sort(unique(permno_10_bw$rank))
+names_disp = gsub('zRemaining firms', 'Remaining firms', names, fixed = T)
+
+# these plots will not look exactly the same because of some internal formatting packages 
+plot_area = ggplot(permno_10_bw, aes(x=year, y=value)) + geom_col(aes(fill=rank), position = 'fill') +
+  ylab(NULL) + xlab(NULL)+
+  labs(subtitle='Proportion of total') +
+  scale_y_continuous(position = 'right', expand = c(0,0), sec.axis = dup_axis(label = NULL))+
+  scale_x_continuous(limits=c(1959, 2011), breaks=seq(1960, 2010, 10), expand = c(0,0))+
+  scale_fill_manual(breaks=names, labels=names_disp, values=hue_value, name=NULL) +
+  theme(legend.position="bottom",
+        plot.subtitle = element_text(size=20),
+        axis.text = element_text(size=20),
+        legend.text = element_text(size=15)) #+ guides(fill = guide_legend(ncol=6)) 
+plot_area
+
+ggsave("Figure4.png", plot_area, width = 15, height = 10, units = "in", dpi=600)
+```
+
+
+```{r}
+# ------------------------------------------------------------------------------
+# -------------------- interesting patent facts --------------------------------
+# ------------------------------------------------------------------------------
+
+# stats about patents
+median(permno_most$counts)
+mean(permno_most$counts)
+
+microsoft = permno_most[permno_most$permno== 'MICROSOFT', 'counts']
+median(microsoft$counts)
+mean(microsoft$counts)
+
+cisco = permno_most[permno_most$permno== 'CISCO SYSTEMS', 'counts']
+median(cisco$counts)
+mean(cisco$counts)
+
+ibm = permno_most[permno_most$permno== 'IBM', 'counts']
+median(ibm$counts)
+mean(ibm$counts)
+
+exxon = permno_most[permno_most$permno== 'EXXON MOBIL', 'counts']
+median(exxon$counts)
+mean(exxon$counts)
+```
+
+```{r}
+# ---------------------- looking at info of different patents -------------------------------------
+# kodak
+df_patents[df_patents$patnum == 4131919,]
+
+# Genex - 'will dominate the whole industry'
+df_patents[df_patents$patnum == 4946778,]
+# PDL - 'could affect as much as 1/4 of all biotech drugs currently in clinical trial'
+df_patents[df_patents$patnum == 5585089,c('patnum','xi')]
+# Amazon shopping recomendation patent
+df_patents[df_patents$patnum == 6317722,c('patnum','xi')]
+# IBM bathroom reservation patent
+df_patents[df_patents$patnum == 6329919,c('patnum','xi')]
+
+# lipitor, 5.08
+df_patents[df_patents$patnum == 4681893,]
+
+# humira, 8.79 
+df_patents[df_patents$patnum == 6090382,]
+
+# norvasc
+df_patents[df_patents$patnum == 4879303,]
+df_patents[df_patents$patnum == 4572909,]
+
+# plavix
+df_patents[df_patents$patnum == 4847265,]
+
+```
+
+```{r}
+# --------------- plot looking at average xi per quarter, unused inpaper ------------
+frmtdf = function(df){
+  # pass df of same time series (all q, m, a, ect)
+  # formats dataframe to a xts object which allows good handling of time series data
+  order_dates = as.Date(df$date)
+  df$date = NULL
+  df_xts = xts(df, order.by = order_dates)
+  
+  return(df_xts)
+}
+
+df_i= df_s[,c('idate', 'xi', 'patnum')]
+
+df_i$date = as.Date(df_i$idate, '%m/%d/%Y')
+df_i$idate = NULL
+df_i$patnum = NULL
+df_i = frmtdf(df_i)
+
+df_q = as.xts(aggregate(df_i, as.yearqtr, mean))
+colnames(df_q) = c('xi_average')#, 'patnum')
+index(df_q) = ceiling_date(as.Date(index(df_q)), 'quarter') - 1
+
+df_q = as.data.frame(df_q)
+df_q$date = as.Date(rownames(df_q))-45#, '%Y')
+
+p = ggplot(df_q, aes(x=date, y=(xi_average))) + 
+  annotate("rect", fill = "dodgerblue3", alpha = .3,
+             xmin = as.Date('1995','%Y'), xmax = as.Date('2000-03-11'), 
+             ymin = -Inf, ymax = Inf) +
+  geom_vline(xintercept = as.Date('2000-03-11'), linetype='dotted', alpha=.5)+
+  geom_line() + xlab(NULL) + ylab(NULL) + labs(title='Average xi per quarter') +
+  scale_x_date(date_labels = '%Y', limits=c(as.Date('1920-01-01'), as.Date('2015-01-01')),
+               breaks= seq.Date(as.Date('1920-01-01'), as.Date('2015-01-01'), by = '10 year'),
+               expand=c(0,0))+
+  scale_y_continuous(position = 'right', expand = c(0,0), limits=c(0, 60), 
+                     breaks = seq(0, 60, by = 15), sec.axis = dup_axis(label = NULL))+
+  annotate('text', x= as.Date('1989-01-01'), y = 40, label = 'Dot-com\nbubble', color='dodgerblue3', size = 5)
+p
+
+ggsave("average_xi.png", p, width = 7, height = 5, units = "in", dpi=600)
+```
